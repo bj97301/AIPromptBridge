@@ -6,6 +6,7 @@ import plistlib
 import platform
 import shutil
 import subprocess
+import zipfile
 
 ROOT = Path(__file__).resolve().parent
 APP = ROOT / "AIPromptBridge.app"
@@ -23,9 +24,24 @@ for name in ("LICENSE", "NOTICE", "RISK_NOTICE.md"):
         raise SystemExit(f"Missing required legal resource: {name}")
     shutil.copyfile(ROOT / name, CONTENTS / "Resources" / name)
 
+skill = CONTENTS / "Resources" / "aipromptbridge-skill"
+if skill.exists():
+    shutil.rmtree(skill)
+shutil.copytree(ROOT / "skills" / "aipromptbridge", skill)
+(skill / "scripts").mkdir(exist_ok=True)
+shutil.copyfile(ROOT / "cli" / "aipromptbridge", skill / "scripts" / "aipromptbridge")
+(skill / "scripts" / "aipromptbridge").chmod(0o755)
+(skill / "references").mkdir(exist_ok=True)
+for name in ("LICENSE", "NOTICE", "RISK_NOTICE.md"):
+    shutil.copyfile(ROOT / name, skill / "references" / name)
+with zipfile.ZipFile(CONTENTS / "Resources" / "aipromptbridge-skill.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    for file in sorted(skill.rglob("*")):
+        if file.is_file():
+            archive.write(file, Path("aipromptbridge") / file.relative_to(skill))
+
 subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-O", "-target", f"{architecture}-apple-macos14.0",
                 *map(str, sorted((ROOT / "Sources").glob("*.swift"))), "-o", str(BINARY),
-                "-framework", "AppKit", "-framework", "ApplicationServices", "-framework", "ScreenCaptureKit", "-framework", "Vision"], check=True)
+                "-framework", "AppKit", "-framework", "ApplicationServices", "-framework", "ScreenCaptureKit", "-framework", "Vision", "-framework", "Security"], check=True)
 info = {
     "CFBundleIdentifier": "io.github.bj97301.aipromptbridge",
     "CFBundleName": "AIPromptBridge", "CFBundleDisplayName": "AIPromptBridge",

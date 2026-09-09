@@ -1,20 +1,95 @@
-name: Build and consent checks
+name: Test, build, and publish
 
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
-    runs-on: macos-latest
+    name: Test and package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compile Python entry points
-        run: python3 -m py_compile build.py cli/aipromptbridge tests/*.py
-      - name: Build locally signed macOS app
+        run: python3 -m py_compile build.py cli/aipromptbridge scripts/*.py tests/*.py
+      - name: Build ad-hoc signed macOS app
         run: python3 build.py
       - name: Test isolated acknowledgment policy
         run: python3 tests/test_consent.py
+      - name: Test isolated skill installer and portable package
+        run: python3 tests/test_skills.py
+      - name: Test operation permissions and password approvals
+        run: python3 tests/test_passwords.py
+      - name: Test packaged app's unacknowledged IPC gate
+        run: python3 tests/test_gate.py
+      - name: Test packaged app's CLI skill installation
+        run: python3 tests/test_skill_cli.py
+      - name: Package app, CLI, skill, and documentation
+        run: python3 scripts/package_release.py
+      - name: Verify extracted download, signature, architecture, and CLI
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: python3 tests/test_distribution.py "dist/AIPromptBridge-macos-$BUILD_ARCH.zip" --arch "$BUILD_ARCH"
+      - name: Upload tested download
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: AIPromptBridge-macos-${{ matrix.arch }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish downloads
+    needs: macos
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: AIPromptBridge-macos-*
+          path: dist
+          merge-multiple: true
+      - name: Check both downloads before publishing
+        working-directory: dist
+        run: |
+          sha256sum --check AIPromptBridge-macos-arm64.zip.sha256
+          sha256sum --check AIPromptBridge-macos-x86_64.zip.sha256
+      - name: Publish an immutable development pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          gh release create "$BUILD_TAG" dist/*.zip dist/*.sha256 \
+            --target "$GITHUB_SHA" --draft --prerelease \
+            --title "Development build $BUILD_TAG" \
+            --notes-file docs/DOWNLOADS.md
+          gh release edit "$BUILD_TAG" --draft=false

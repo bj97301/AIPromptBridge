@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """AIPromptBridge's local JSON CLI. No external packages required."""
 import argparse
+import base64
 import getpass
 import json
 import os
@@ -15,7 +16,31 @@ import time
 
 SOCKET_DIR = Path(f"/tmp/io.github.bj97301.aipromptbridge-{os.getuid()}")
 SOCKET_PATH = SOCKET_DIR / "control.sock"
-APP = Path(__file__).resolve().parent.parent / "AIPromptBridge.app"
+def find_app():
+    override = os.environ.get("AIPROMPTBRIDGE_APP")
+    if override:
+        path = Path(override).expanduser()
+        if not path.is_absolute() or path.suffix != ".app" or not path.is_dir():
+            raise RuntimeError("AIPROMPTBRIDGE_APP must be an existing absolute .app directory.")
+        return path
+    source = Path(__file__).resolve()
+    candidates = []
+    location = source.parent / "app-location.json"
+    if location.is_file():
+        try:
+            path = Path(json.loads(location.read_text())["appPath"])
+            if path.is_absolute() and path.suffix == ".app":
+                candidates.append(path)
+        except (ValueError, KeyError, TypeError, OSError):
+            pass
+    if source.parent.name == "Resources" and source.parent.parent.name == "Contents":
+        candidates.append(source.parents[2])
+    candidates.extend([source.parent.parent / "AIPromptBridge.app",
+                       Path("/Applications/AIPromptBridge.app"),
+                       Path.home() / "Applications/AIPromptBridge.app"])
+    return next((path for path in candidates if path.is_dir()), candidates[0])
+
+
 SUCCESS = {"ok", "delivered"}
 
 
@@ -41,9 +66,10 @@ def connect():
             connection.close()
         except UnboundLocalError:
             pass
-    if not APP.is_dir():
-        raise RuntimeError(f"App not found at {APP}. Run python3 build.py first.")
-    subprocess.run(["/usr/bin/open", "-g", str(APP), "--args", "--background"], check=True, stdout=subprocess.DEVNULL)
+    app = find_app()
+    if not app.is_dir():
+        raise RuntimeError("AIPromptBridge app not found. Build and open the app, then reinstall the skill, or set AIPROMPTBRIDGE_APP to its absolute .app path.")
+    subprocess.run(["/usr/bin/open", "-g", str(app), "--args", "--background"], check=True, stdout=subprocess.DEVNULL)
     for _ in range(60):
         time.sleep(0.1)
         try:
@@ -60,7 +86,7 @@ def connect():
 
 def request(payload):
     payload = dict(payload)
-    payload["deadline"] = time.time() + 25
+    payload["deadline"] = time.time() + (65 if payload.get("op") in ("fill", "demo.fill") else 25)
     # Only connection establishment may be retried. Never resend a mutation.
     with connect() as connection:
         encoded = bytearray(json.dumps(payload, ensure_ascii=False).encode() + b"\n")
@@ -83,6 +109,30 @@ def request(payload):
 
 def output(result):
     print(json.dumps(result, indent=2, ensure_ascii=False), flush=True)
+
+
+def wait_for_password_approval(result):
+    if result.get("status") != "approval_required":
+        return result
+    approval_id = result.get("request_id")
+    expires = result.get("expires_at")
+    if not isinstance(approval_id, str) or not isinstance(expires, (int, float)):
+        raise RuntimeError("The app returned an invalid approval request.")
+    print("Waiting for approval in AIPromptBridge. Choose Allow once or Deny in the app.", file=sys.stderr, flush=True)
+    try:
+        while result.get("status") == "approval_required":
+            if time.time() > expires + 2:
+                request({"op": "approval.cancel", "id": approval_id})
+                return {"status": "expired", "message": "Password approval expired. Scan again."}
+            time.sleep(0.4)
+            result = request({"op": "approval.result", "id": approval_id})
+        return result
+    except BaseException:
+        try:
+            request({"op": "approval.cancel", "id": approval_id})
+        except Exception:
+            pass
+        raise
 
 
 def secret_from_args(args):
@@ -112,11 +162,58 @@ def secret_from_args(args):
     return value
 
 
+def skill_command(args):
+    payload = {"op": "skills." + args.skills_command}
+    if "CLAUDE_CONFIG_DIR" in os.environ:
+        payload["claude_config_dir"] = os.environ["CLAUDE_CONFIG_DIR"]
+    if args.skills_command == "install":
+        if args.all_targets:
+            payload["all"] = True
+        elif args.target:
+            payload["targets"] = args.target
+        else:
+            payload["folder"] = str(Path(args.folder).expanduser().absolute())
+    destination = None
+    if args.skills_command == "export":
+        destination = Path(args.output).expanduser().absolute()
+        if destination.exists() or destination.is_symlink() or not destination.parent.is_dir():
+            raise RuntimeError("Choose a new ZIP file in an existing directory; exports do not overwrite files.")
+    result = request(payload)
+    if destination is not None and result.get("status") == "ok":
+        encoded = result.pop("archive_base64", None)
+        if not isinstance(encoded, str) or len(encoded) > 12 * 1024 * 1024:
+            raise RuntimeError("The app returned an invalid skill archive.")
+        data = base64.b64decode(encoded, validate=True)
+        if not data or len(data) > 8 * 1024 * 1024:
+            raise RuntimeError("The app returned an invalid skill archive.")
+        # O_EXCL also rejects a file or symlink created after the preflight check.
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as new_file:
+                new_file.write(data)
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+        result = {"status": "ok", "output": str(destination), "bytes": len(data)}
+    output(result)
+    return 0 if result.get("status") in SUCCESS else 1
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Inspect and control macOS dialogs through the local AIPromptBridge app.")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "open", "apps", "risks"):
         sub.add_parser(name)
+    skills = sub.add_parser("skills", help="List, install, or export the AI skill without enabling computer control")
+    skill_sub = skills.add_subparsers(dest="skills_command", required=True)
+    skill_sub.add_parser("list", help="List detected destinations and their target IDs")
+    install = skill_sub.add_parser("install", help="Install or update managed skills; preserve customized copies")
+    selection = install.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--all", dest="all_targets", action="store_true", help="Install in every detected skills folder")
+    selection.add_argument("--target", action="append", metavar="ID", help="Target ID from skills list; repeat to select more")
+    selection.add_argument("--folder", help="An explicit skills directory; adds aipromptbridge inside it")
+    export = skill_sub.add_parser("export", help="Export the portable skill ZIP without machine-specific paths")
+    export.add_argument("--output", required=True, help="New ZIP file; existing files are preserved")
     for name in ("scan", "watch"):
         cmd = sub.add_parser(name)
         target = cmd.add_mutually_exclusive_group()
@@ -135,6 +232,7 @@ def build_parser():
         source = cmd.add_mutually_exclusive_group(required=True)
         source.add_argument("--secret-stdin", action="store_true")
         source.add_argument("--secret-prompt", action="store_true")
+        source.add_argument("--saved", action="store_true", help="Ask the app to enter its saved Keychain password; the CLI never receives it")
     fill_command(sub)
     capture = sub.add_parser("capture", help="OCR every display, optionally saving full-resolution PNGs")
     capture.add_argument("--display", type=int)
@@ -158,10 +256,23 @@ def main():
     args = build_parser().parse_args()
     try:
         command = args.command
+        if command == "skills":
+            return skill_command(args)
         if command not in ("status", "open", "risks"):
             setup = request({"op": "status"})
             if not setup.get("acknowledgment", {}).get("accepted"):
                 output({"status": "acknowledgment_required", "message": "Open AIPromptBridge and review and acknowledge the risk notice and license first.", "acknowledgment": setup.get("acknowledgment", {})})
+                return 1
+            capability = None
+            if command in ("press", "accept", "reject") or (command == "demo" and args.demo_command == "press"):
+                capability = "buttons"
+            elif command == "fill" or (command == "demo" and args.demo_command == "fill"):
+                capability = "saved_password" if args.saved else "manual_input"
+            elif command in ("capture", "ocr"):
+                capability = "capture"
+            if capability and not setup.get("allowed_operations", {}).get(capability, False):
+                output({"status": "operation_not_allowed", "capability": capability,
+                        "message": "Enable this operation in AIPromptBridge's Allowed actions. Update the app if that option is missing."})
                 return 1
         if command == "ocr":
             # The CLI reads exactly the caller-selected file. Stage it in the app's
@@ -229,7 +340,9 @@ def main():
             elif args.demo_command == "press":
                 payload.update(id=args.id, button=args.button)
         if command == "fill" or (command == "demo" and args.demo_command == "fill"):
-            payload.update(id=args.id, field=args.field, secret=secret_from_args(args))
+            payload.update(id=args.id, field=args.field, source="saved" if args.saved else "manual")
+            if not args.saved:
+                payload["secret"] = secret_from_args(args)
         if command == "watch":
             if args.interval < 1:
                 raise RuntimeError("Watch interval must be at least one second.")
@@ -248,6 +361,7 @@ def main():
                 time.sleep(args.interval)
         result = request(payload)
         payload.pop("secret", None)
+        result = wait_for_password_approval(result)
         output(result)
         return 0 if result.get("status") in SUCCESS else 1
     except KeyboardInterrupt:

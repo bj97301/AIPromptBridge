@@ -183,7 +183,56 @@ final class AccessibilityController {
         return roots.contains { CFEqual($0, state.root) }
     }
 
+    func preparePasswordInput(_ request: JSON) throws -> PreparedPasswordInput {
+        guard AXIsProcessTrusted() else { throw BridgeInputError("permission_required", "Enable AIPromptBridge Accessibility access first.") }
+        guard let id = request["id"] as? String, let ticket = tickets.removeValue(forKey: id), ticket.expires > Date() else {
+            throw BridgeInputError("stale", "Dialog ID is expired, used, or unknown. Scan again.")
+        }
+        guard let fieldID = request["field"] as? String else { throw BridgeInputError("invalid_request", "Choose an exact field ID.") }
+        let expires = min(ticket.expires, Date(timeIntervalSince1970: request["deadline"] as? Double ?? 0))
+        let getField: () throws -> AXControl = { [weak self] in
+            guard let self, expires > Date() else { throw BridgeInputError("expired", "Password request expired. Scan again.") }
+            let deadline = min(expires.timeIntervalSince1970, Date().timeIntervalSince1970 + 3)
+            guard self.live(ticket.state, deadline: deadline),
+                  let current = self.describe(ticket.state.root, process: ticket.state.process, deadline: deadline),
+                  current.fingerprint == ticket.state.fingerprint else {
+                throw BridgeInputError("stale", "The target dialog changed or closed. Scan again.")
+            }
+            guard let field = current.fields.first(where: { $0.id == fieldID }) else {
+                throw BridgeInputError("not_found", "The selected field no longer exists.")
+            }
+            guard field.data["enabled"] as? Bool == true, field.data["writable"] as? Bool == true else {
+                throw BridgeInputError("user_interaction_required", "This field does not permit Accessibility input. Enter the value directly in the target app.")
+            }
+            return field
+        }
+        let field = try getField()
+        let owner = ticket.state.process.localizedName ?? "Unknown app"
+        let bundle = ticket.state.process.bundleIdentifier ?? "pid \(ticket.state.process.processIdentifier)"
+        let title = ticket.state.data["title"] as? String ?? ""
+        let text = String((ticket.state.data["text"] as? [String] ?? []).joined(separator: "\n").prefix(2000))
+        let label = field.data["label"] as? String ?? ""
+        let context = [title, text].filter { !$0.isEmpty }.joined(separator: "\n")
+        return PreparedPasswordInput(target: "\(owner) (\(bundle))\n\(context)\nField: \(label.isEmpty ? fieldID : label) [\(fieldID)]",
+                                     secure: field.data["secure"] as? Bool == true, expires: expires,
+                                     validate: {
+            do { _ = try getField(); return nil }
+            catch let error as BridgeInputError { return error.response }
+            catch { return failure("stale", "The target could not be verified.") }
+        }, apply: { secret in
+            do {
+                let current = try getField()
+                let error = AXUIElementSetAttributeValue(current.element, kAXValueAttribute as CFString, secret as CFString)
+                if error != .success { return axError(error) }
+                return ["status": "delivered", "operation": "fill", "secret_returned": false,
+                        "message": "Field input was delivered. Scan again before choosing a submission button."]
+            } catch let error as BridgeInputError { return error.response }
+            catch { return failure("stale", "The target could not be verified.") }
+        })
+    }
+
     func act(_ request: JSON, reply: @escaping (JSON) -> Void) {
+        guard request["op"] as? String == "press" else { reply(failure("invalid_request", "Unknown button operation.")); return }
         guard AXIsProcessTrusted() else { reply(failure("permission_required", "Enable AIPromptBridge Accessibility access first.")); return }
         guard let id = request["id"] as? String, let ticket = tickets.removeValue(forKey: id), ticket.expires > Date() else {
             reply(failure("stale", "Dialog ID expired, was already used, or is unknown. Scan again.")); return
@@ -195,20 +244,6 @@ final class AccessibilityController {
             reply(failure("stale", "The dialog closed or changed. Scan again before acting.")); return
         }
         guard Date().timeIntervalSince1970 < deadline else { reply(failure("expired", "Request expired.")); return }
-        if request["op"] as? String == "fill" {
-            guard let fieldID = request["field"] as? String,
-                  let field = current.fields.first(where: { $0.id == fieldID }),
-                  let secret = request["secret"] as? String, !secret.isEmpty, secret.utf8.count <= 16_384 else {
-                reply(failure("invalid_request", "Choose an exact field ID and provide up to 16384 bytes through hidden input or stdin.")); return
-            }
-            guard field.data["enabled"] as? Bool == true, field.data["writable"] as? Bool == true else {
-                reply(failure("user_interaction_required", "The field does not expose a writable Accessibility value. Enter it directly in the target app.")); return
-            }
-            let error = AXUIElementSetAttributeValue(field.element, kAXValueAttribute as CFString, secret as CFString)
-            if error != .success { reply(axError(error)); return }
-            reply(["status": "delivered", "operation": "fill", "message": "The app accepted the field update. Its contents were not read back. Scan again to choose a button.", "secret_returned": false])
-            return
-        }
         guard let label = request["button"] as? String, !label.isEmpty else {
             reply(failure("invalid_request", "Specify the exact visible button label.")); return
         }

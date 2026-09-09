@@ -15,7 +15,7 @@ if setup.get("acknowledgment", {}).get("accepted"):
     sys.exit(77)
 
 path = f"/tmp/io.github.bj97301.aipromptbridge-{os.getuid()}/control.sock"
-for op in ("apps", "scan", "press", "fill", "capture", "ocr", "demo.show", "demo.scan", "demo.press", "demo.fill", "demo.result", "risks.accept"):
+for op in ("apps", "scan", "press", "fill", "capture", "ocr", "demo.show", "demo.scan", "demo.press", "demo.fill", "demo.result", "risks.accept", "skills.approve", "skills.permissions"):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)
         connection.connect(path)

@@ -29,6 +29,10 @@ def main():
     if not setup["accessibility"]:
         print("SKIP: AIPromptBridge Accessibility permission is not enabled.")
         return 77
+    allowed = setup.get("allowed_operations", {})
+    if not allowed.get("buttons") or not allowed.get("manual_input") or allowed.get("ask_before_password", True):
+        print("SKIP: This unattended dummy fixture needs buttons and manual input enabled, with ask-first disabled.")
+        return 77
     with tempfile.TemporaryDirectory(prefix="aipromptbridge-ax-test-") as folder:
         root = Path(folder)
         app = root / "AIPromptBridge Fixture.app"

@@ -41,6 +41,10 @@ class Integration(unittest.TestCase):
             self.assertEqual(after["dialogs"], [])
 
     def test_hidden_field_and_single_use(self):
+        _, setup, _ = run("status")
+        allowed = setup.get("allowed_operations", {})
+        if not allowed.get("manual_input") or allowed.get("ask_before_password", True):
+            self.skipTest("Enable manual input and disable Ask first only for this unattended dummy test.")
         dialog = self.dialog()
         dummy = "bridge-test-dummy-\u2713-5827"
         code, result, raw = run("demo", "fill", dialog["id"], "--field", "field-1", "--secret-stdin", secret=dummy + "\n")
@@ -88,7 +92,8 @@ class Integration(unittest.TestCase):
         if not status["screen_recording"]:
             code, result, _ = run("capture")
             self.assertEqual(code, 1)
-            self.assertEqual(result["status"], "permission_required")
+            expected = "permission_required" if status.get("allowed_operations", {}).get("capture") else "operation_not_allowed"
+            self.assertEqual(result["status"], expected)
 
 
 if __name__ == "__main__":
@@ -96,5 +101,8 @@ if __name__ == "__main__":
     _, setup, _ = run("status")
     if not setup.get("acknowledgment", {}).get("accepted"):
         print("SKIP: Review and acknowledge the notices in AIPromptBridge before operational tests.")
+        sys.exit(77)
+    if not setup.get("allowed_operations", {}).get("buttons"):
+        print("SKIP: Enable prompt buttons before running the native fixture tests.")
         sys.exit(77)
     unittest.main(verbosity=2)

@@ -7,8 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let accessibility = AccessibilityController()
     let capture = ScreenCapture()
     let consent = ConsentPolicy()
+    let policy = OperationPolicy()
+    let passwordStore = KeychainPasswordStore()
+    lazy var passwordRequests = PasswordRequests(policy: policy, store: passwordStore, consent: { [weak self] in self?.consent.isAccepted == true })
+    var allowedActions: AllowedActionsController?
+    var passwordApproval: PasswordApprovalController?
     var acknowledgmentCheckbox: NSButton?
     var enableButton: NSButton?
+    var skillSetup: SkillSetupController?
     var window: NSWindow!
     var statusItem: NSStatusItem!
     var permissionLabel: NSTextField!
@@ -41,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About AIPromptBridge", action: #selector(showWindow), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Allowed actions…", action: #selector(showAllowedActions), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: "Install AI skill…", action: #selector(installSkill), keyEquivalent: "").target = self
         appMenu.addItem(withTitle: "Report a bug…", action: #selector(reportBug), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit AIPromptBridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -60,6 +68,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "AIPromptBridge")
         let menu = NSMenu()
         menu.addItem(withTitle: "Open AIPromptBridge", action: #selector(showWindow), keyEquivalent: "")
+        menu.addItem(withTitle: "Allowed actions…", action: #selector(showAllowedActions), keyEquivalent: "")
+        menu.addItem(withTitle: "Install AI skill…", action: #selector(installSkill), keyEquivalent: "")
         menu.addItem(withTitle: "Show test dialog", action: #selector(showDemoFromUI), keyEquivalent: "")
         menu.addItem(withTitle: "Pause CLI access", action: #selector(pauseAccess), keyEquivalent: "")
         menu.addItem(withTitle: "Report a bug…", action: #selector(reportBug), keyEquivalent: "")
@@ -117,9 +127,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stack.addArrangedSubview(commands)
         stack.addArrangedSubview(label("Enable Accessibility to inspect and act on other apps. Screen Recording is optional and adds full-display capture with local text recognition.", size: 13))
         stack.addArrangedSubview(label("Some system prompts require direct interaction. Passwords are never read back. Captures happen only when requested.", size: 13))
-        stack.addArrangedSubview(NSButton(title: "Show test dialog", target: self, action: #selector(showDemoFromUI)))
-        stack.addArrangedSubview(NSButton(title: "Pause CLI access", target: self, action: #selector(pauseAccess)))
-        stack.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
+        stack.addArrangedSubview(setupButtons())
+        let utilities = NSStackView()
+        utilities.orientation = .horizontal
+        utilities.spacing = 12
+        utilities.addArrangedSubview(NSButton(title: "Show test dialog", target: self, action: #selector(showDemoFromUI)))
+        utilities.addArrangedSubview(NSButton(title: "Pause CLI access", target: self, action: #selector(pauseAccess)))
+        utilities.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
+        stack.addArrangedSubview(utilities)
         refresh()
     }
 
@@ -183,6 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buttons.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
         buttons.addArrangedSubview(NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:))))
         stack.addArrangedSubview(buttons)
+        stack.addArrangedSubview(setupButtons())
+    }
+
+    func setupButtons() -> NSStackView {
+        let buttons = NSStackView()
+        buttons.spacing = 12
+        buttons.addArrangedSubview(NSButton(title: "Allowed actions…", target: self, action: #selector(showAllowedActions)))
+        buttons.addArrangedSubview(NSButton(title: "Install AI skill…", target: self, action: #selector(installSkill)))
+        return buttons
     }
 
     @objc func acknowledgmentChanged() {
@@ -197,8 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func pauseAccess() {
         consent.revoke()
-        accessibility.invalidateTickets()
-        demoID = nil
+        accessChanged()
         buildWindow()
         showWindow()
     }
@@ -225,6 +248,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refresh() {
         permissionLabel?.stringValue = "Accessibility: \(AXIsProcessTrusted() ? "enabled" : "needs setup")     Screen Recording: \(CGPreflightScreenCaptureAccess() ? "enabled" : "optional, not enabled")"
+        passwordRequests.expire()
+        if passwordRequests.pending == nil { passwordApproval?.dismiss(); passwordApproval = nil }
+    }
+
+    func accessChanged() {
+        policy.invalidate()
+        passwordRequests.invalidate()
+        passwordApproval?.dismiss(); passwordApproval = nil
+        accessibility.invalidateTickets(); demoID = nil
+        refresh()
+    }
+
+    @objc func showAllowedActions() {
+        if allowedActions == nil {
+            allowedActions = AllowedActionsController(policy: policy, store: passwordStore, changed: { [weak self] in self?.accessChanged() })
+        }
+        allowedActions?.refresh()
+        allowedActions?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func showWindow() {
@@ -235,6 +277,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func reportBug() {
         NSWorkspace.shared.open(URL(string: "https://github.com/bj97301/AIPromptBridge/issues/new")!)
+    }
+
+    @objc func installSkill() {
+        guard let resources = Bundle.main.resourceURL else { return }
+        skillSetup?.close()
+        skillSetup = SkillSetupController(resources: resources, app: Bundle.main.bundleURL)
+        skillSetup?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func openAccessibility() {
@@ -302,14 +352,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reply(failure("stale", "Test dialog ID is expired, used, or unknown. Run demo scan again.")); return
         }
         demoID = nil
-        if request["op"] as? String == "demo.fill" {
-            guard request["field"] as? String == "field-1", let field = demoField,
-                  let value = request["secret"] as? String, !value.isEmpty, value.utf8.count <= 16_384 else {
-                reply(failure("invalid_request", "Provide a dummy key and field-1.")); return
-            }
-            field.stringValue = value
-            reply(["status": "delivered", "secret_returned": false]); return
-        }
         guard let label = request["button"] as? String, let button = alert.buttons.first(where: { $0.title == label }) else {
             reply(failure("not_found", "Button label does not match.")); return
         }
@@ -317,28 +359,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in reply(self?.demoResult ?? [:]) }
     }
 
+    func prepareDemoInput(_ request: JSON) throws -> PreparedPasswordInput {
+        guard let id = request["id"] as? String, id == demoID, demoExpires > Date(), demo != nil else {
+            throw BridgeInputError("stale", "Test dialog ID is expired, used, or unknown. Run demo scan again.")
+        }
+        demoID = nil
+        guard request["field"] as? String == "field-1", let field = demoField else {
+            throw BridgeInputError("not_found", "Choose field-1 in a test dialog with a dummy password field.")
+        }
+        let generation = demoGeneration
+        let expires = min(demoExpires, Date(timeIntervalSince1970: request["deadline"] as? Double ?? 0))
+        let validate: () -> JSON? = { [weak self, weak field] in
+            guard let self, let field, self.demo != nil, self.demoGeneration == generation,
+                  self.demoField === field, expires > Date() else {
+                return failure("stale", "The test dialog changed, closed, or expired. Scan again.")
+            }
+            return nil
+        }
+        return PreparedPasswordInput(target: "AIPromptBridge test dialog\nField: Dummy access key", secure: true,
+                                     expires: expires, validate: validate, apply: { [weak field] secret in
+            if let invalid = validate() { return invalid }
+            field?.stringValue = secret
+            return ["status": "delivered", "secret_returned": false]
+        })
+    }
+
+    func fill(_ request: JSON) -> JSON {
+        do {
+            let target = try request["op"] as? String == "demo.fill" ? prepareDemoInput(request) : accessibility.preparePasswordInput(request)
+            let result = passwordRequests.start(request, target: target)
+            if result["status"] as? String == "approval_required", let pending = passwordRequests.pending {
+                passwordApproval = PasswordApprovalController(request: pending) { [weak self] allow in
+                    self?.passwordRequests.decide(pending.id, allow: allow)
+                }
+                passwordApproval?.showWindow(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            return result
+        } catch let error as BridgeInputError { return error.response }
+        catch { return failure("invalid_request", "The password request could not be prepared.") }
+    }
+
+    var savedPasswordStatus: JSON {
+        do { return ["saved": try passwordStore.isSaved(), "storage": "macos_keychain"] }
+        catch { return ["saved": NSNull(), "storage": "macos_keychain", "status": "unavailable"] }
+    }
+
     func handle(_ request: JSON, reply: @escaping (JSON) -> Void) {
         let op = request["op"] as? String ?? ""
-        if !["status", "open", "risks"].contains(op), !consent.isAccepted {
+        if !["status", "open", "risks", "approval.result", "approval.cancel"].contains(op),
+           !SkillCommands.operations.contains(op), !consent.isAccepted {
             reply(failure("acknowledgment_required", "Open AIPromptBridge, review the risk notice and license, and explicitly acknowledge them before using CLI controls.", extra: ["acknowledgment": consent.status]))
             return
         }
+        if let denied = policy.denial(for: request) { reply(denied); return }
         switch op {
         case "status": reply(["status": "ok", "version": "0.1.0", "pid": getpid(), "bundle_id": bridgeID,
                               "accessibility": AXIsProcessTrusted(), "screen_recording": CGPreflightScreenCaptureAccess(),
                               "acknowledgment": consent.status,
+                              "allowed_operations": policy.status, "saved_password": savedPasswordStatus,
                               "transport": "unix_socket", "socket": socketPath, "password_input": "write_only_supported_ax_fields"])
         case "open": showWindow(); reply(["status": "ok"])
         case "risks": reply(["status": "ok", "notice": consent.notice, "license": consent.license, "acknowledgment": consent.status])
+        case "skills.list", "skills.install", "skills.export":
+            guard let resources = Bundle.main.resourceURL else {
+                reply(failure("install_failed", "App resources are unavailable. Rebuild the app.")); return
+            }
+            let installer = SkillInstaller(payload: resources.appendingPathComponent("aipromptbridge-skill"), app: Bundle.main.bundleURL)
+            reply(SkillCommands(installer: installer).handle(request))
         case "apps": reply(accessibility.apps())
         case "scan": reply(accessibility.scan(request))
-        case "press", "fill": accessibility.act(request, reply: reply)
+        case "press": accessibility.act(request, reply: reply)
+        case "fill", "demo.fill": reply(fill(request))
         case "capture": capture.capture(request, reply: reply)
         case "ocr": capture.ocr(request, reply: reply)
         case "demo.show": reply(showDemo(password: request["password"] as? Bool ?? true))
         case "demo.scan": reply(demoScan())
-        case "demo.press", "demo.fill": demoAction(request, reply: reply)
+        case "demo.press": demoAction(request, reply: reply)
         case "demo.result": reply(demoResult)
+        case "approval.result": reply(passwordRequests.result(request["id"] as? String ?? ""))
+        case "approval.cancel":
+            reply(passwordRequests.cancel(request["id"] as? String ?? ""))
+            refresh()
         default: reply(failure("invalid_request", "Unknown operation."))
         }
     }
