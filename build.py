@@ -19,6 +19,15 @@ identity = os.environ.get("AIPROMPTBRIDGE_SIGNING_IDENTITY") or "-"
 architecture = platform.machine()
 if architecture not in {"arm64", "x86_64"}:
     raise SystemExit(f"Unsupported build architecture: {architecture}")
+
+icon_tool = ROOT / ".build" / "make-icon"
+icon_tool.parent.mkdir(exist_ok=True)
+iconset = icon_tool.parent / "AIPromptBridge.iconset"
+subprocess.run(["xcrun", "swiftc", "-swift-version", "5", str(ROOT / "Sources/Branding.swift"),
+                str(ROOT / "scripts/MakeIcon.swift"), "-o", str(icon_tool), "-framework", "AppKit"], check=True)
+subprocess.run([str(icon_tool), str(iconset)], check=True)
+subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(CONTENTS / "Resources/AppIcon.icns")], check=True)
+
 for name in ("LICENSE", "NOTICE", "RISK_NOTICE.md"):
     if not (ROOT / name).is_file():
         raise SystemExit(f"Missing required legal resource: {name}")
@@ -46,6 +55,7 @@ info = {
     "CFBundleIdentifier": "io.github.bj97301.aipromptbridge",
     "CFBundleName": "AIPromptBridge", "CFBundleDisplayName": "AIPromptBridge",
     "CFBundleExecutable": "AIPromptBridge", "CFBundlePackageType": "APPL",
+    "CFBundleIconFile": "AppIcon",
     "CFBundleShortVersionString": "0.1.0", "CFBundleVersion": "1",
     "LSMinimumSystemVersion": "14.0", "LSUIElement": True,
     "NSHighResolutionCapable": True,

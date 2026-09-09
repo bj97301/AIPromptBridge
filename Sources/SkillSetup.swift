@@ -55,6 +55,7 @@ final class SkillSetupController: NSWindowController {
         list.translatesAutoresizingMaskIntoConstraints = false
         for target in targets {
             let checkbox = NSButton(checkboxWithTitle: target.title, target: nil, action: nil)
+                .withHelp("Include this destination when you choose Install selected: \(target.destination.path). Edited existing skills are preserved.")
             checkbox.state = .on
             checkboxes.append(checkbox)
             list.addArrangedSubview(checkbox)
@@ -75,10 +76,13 @@ final class SkillSetupController: NSWindowController {
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 10
-        buttons.addArrangedSubview(NSButton(title: "Install selected", target: self, action: #selector(installSelected)))
-        buttons.addArrangedSubview(NSButton(title: "Choose skills folder…", target: self, action: #selector(chooseFolder)))
-        buttons.addArrangedSubview(NSButton(title: "Export skill ZIP…", target: self, action: #selector(exportSkill)))
-        buttons.addArrangedSubview(NSButton(title: "Done", target: self, action: #selector(closeSetup)))
+        buttons.addArrangedSubview(NSButton(title: "Install selected", target: self, action: #selector(installSelected))
+            .withHelp("Install or update AIPromptBridge in the checked skill folders. Customized copies are preserved; start a new AI session afterward."))
+        buttons.addArrangedSubview(NSButton(title: "Choose skills folder…", target: self, action: #selector(chooseFolder))
+            .withHelp("Choose another compatible app's skills directory. AIPromptBridge adds only its own skill folder inside it."))
+        buttons.addArrangedSubview(NSButton(title: "Export skill ZIP…", target: self, action: #selector(exportSkill))
+            .withHelp("Save a portable skill ZIP for manual import. It contains instructions and a CLI, with no password or machine-specific app path."))
+        buttons.addArrangedSubview(NSButton(title: "Done", target: self, action: #selector(closeSetup)).withHelp(AppHelp.done))
         stack.addArrangedSubview(buttons)
 
         let results = NSScrollView()

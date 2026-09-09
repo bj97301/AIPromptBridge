@@ -27,6 +27,8 @@ with tempfile.TemporaryDirectory(prefix="aipromptbridge-skills-") as temporary:
         assert "aipromptbridge/SKILL.md" in names
         assert "aipromptbridge/scripts/aipromptbridge" in names
         assert "aipromptbridge/references/LICENSE" in names
+        assert archive.read("aipromptbridge/SKILL.md") == (ROOT / "skills/aipromptbridge/SKILL.md").read_bytes()
+        assert archive.read("aipromptbridge/scripts/aipromptbridge") == (ROOT / "cli/aipromptbridge").read_bytes()
         assert not any(name.endswith("app-location.json") for name in names)
         for name in names:
             content = archive.read(name)

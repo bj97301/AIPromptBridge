@@ -26,7 +26,26 @@ open AIPromptBridge.app
 3. Enable **Screen Recording** only if you want live capture and OCR.
 4. Open **Allowed actions…** to allow password input or capture/OCR. Ask-first is enabled for passwords by default.
 
-The app stays in your menu bar. Run the CLI from the extracted or source folder; it starts the app when needed. [Build and signing details](docs/BUILDING.md).
+The app stays in your menu bar. Run the CLI from the extracted or source folder; it starts the app when needed. Hover over buttons, checkboxes, and password fields for help. [Build and signing details](docs/BUILDING.md).
+
+## Screenshots
+
+The main window shows permissions, CLI examples, and setup controls.
+
+![AIPromptBridge main window with Accessibility enabled and setup controls](docs/images/overview.jpg)
+
+<details>
+<summary>Allowed actions and the test dialog</summary>
+
+Choose which actions your tools can request. This screenshot shows an example configuration; password input and capture are off, and ask-first is on, by default.
+
+![Allowed actions for prompt buttons, manual input, saved passwords, ask-first, and capture](docs/images/allowed-actions.jpg)
+
+Use the built-in test dialog with a made-up value to try button presses and hidden input.
+
+![Harmless test dialog with a dummy access key field and Cancel and Continue buttons](docs/images/test-dialog.jpg)
+
+</details>
 
 ## Use
 
@@ -76,7 +95,13 @@ Saved input is limited to secure fields, and the password is never returned to t
 
 ## Limits and stopping
 
-Some custom dialogs, protected password fields, and system permission prompts cannot be automated. OCR identifies text; it does not authorize actions or provide a click fallback. No cloud service or model is included. Other processes running as your user can use the socket after acknowledgment, so connect only tools you trust.
+System alerts and password prompts are supported when macOS exposes their buttons and writable fields through Accessibility. System apps are not excluded. You can enter a password manually or use the app's saved Keychain password in an exposed secure field, then scan again and press the exact confirmation button.
+
+Support depends on the individual prompt. Some controls are hidden from Accessibility or refuse its actions. The current build cannot operate those controls. Screenshots and OCR currently provide inspection only; coordinate clicking and simulated keyboard input are not implemented.
+
+A local test on macOS 26.6.2 successfully authenticated to System Settings' Date & Time sheet using a real password saved in Keychain. The CLI filled the secure field and pressed Unlock; automatic time zone changed from on to off, then was restored to on with the time zone unchanged. The password was never returned to the CLI. [Test coverage](docs/TESTING.md).
+
+The app runs locally and connects to your existing AI agent or script; it does not include a cloud service or model. Other processes running as your user can use the socket after acknowledgment, so connect only tools you trust.
 
 Use **Pause CLI access** in the app to block new requests, or quit it. Revoke Accessibility and Screen Recording in System Settings when no longer needed. [Security details](SECURITY.md) · [Command reference](docs/CLI.md) · [Tests](docs/TESTING.md).
 

@@ -1,6 +1,6 @@
 ---
 name: aipromptbridge
-description: Inspect macOS alerts, press an exact button, fill an exposed field, or install AIPromptBridge's local AI skill through its CLI when the user wants help with desktop prompts or agent setup.
+description: Use AIPromptBridge's local CLI to inspect macOS app and system prompts, press exact buttons, fill exposed fields with manual or saved Keychain input, and install its AI skill.
 ---
 
 # AIPromptBridge
@@ -42,19 +42,29 @@ Copy exact IDs and button labels from the latest scan. IDs expire after 60 secon
 
 Use `--secret-prompt` only in a terminal the user can interact with. A trusted local credential provider can pipe its output into `fill ... --secret-stdin` when authorized. Never request real credentials in chat or put them in arguments, logs, source files, or the clipboard. The app does not read field contents back.
 
-With `--saved`, the app retrieves its own Keychain password and enters it directly into a secure field; the CLI never receives the password. If none is stored, ask the user to save it in the app or choose manual input. Never query Keychain yourself to extract it.
+When the user authorizes using the saved password, check `status.saved_password.saved` and `status.allowed_operations.saved_password`, then use `--saved`. The app retrieves its own Keychain password and enters it directly into the selected secure field; the CLI never receives the password. If none is stored, ask the user to save it in the app or choose manual input. Never query Keychain yourself to extract it.
 
 When `ask_before_password` is on, ask the user to approve this particular use in AIPromptBridge and wait for their decision. The app identifies the target and offers Allow once or Deny. Do not click, simulate, script, or otherwise operate those approval controls on the user's behalf. The CLI waits automatically; do not interrupt and retry to evade approval. Denial or expiry means no input was authorized. Both manual and saved input follow this rule. Polling an approval cannot approve it.
 
 If a system control or your agent tooling refuses an action, report the limitation and leave protected interaction to the user. Do not switch to another input method, edit permissions databases, or use this CLI to route around a safety denial.
 
+## System password prompts
+
+System prompts are supported when macOS exposes their buttons and writable secure fields through Accessibility. On 2026-09-09, the current app successfully authenticated to System Settings' Date & Time sheet on macOS 26.6.2 using `--saved`, followed by a fresh scan and an exact Unlock press. Automatic time zone changed from on to off and was restored to on. This proves that particular flow; inspect each new prompt rather than assuming universal support or excluding all system prompts. [Test record](https://github.com/bj97301/AIPromptBridge/blob/main/docs/TESTING.md#real-system-settings-authentication).
+
+For an authorized real-prompt test, record the original setting, inspect the actual target and secure field, fill with the authorized source, scan again, and choose the exact submission button. Verify both authentication and the resulting setting, then restore and verify the original state. Read field IDs from the current scan; do not hard-code the IDs from a previous test. If authentication fails, report it rather than repeatedly submitting the credential.
+
+## Watching for prompts
+
+`BRIDGE watch --interval 2` runs repeated local scans and prints JSON snapshots when the dialog set changes, plus periodic refreshes of expiring IDs. It still polls; it does not push an event into an idle AI conversation. Native event subscriptions, `wait` and `events` commands, and integrations that wake an agent are not implemented. A skill alone cannot resume an idle agent. Stop the watcher when the task is finished and scan again before acting on an old snapshot.
+
 ## Verify
 
 `delivered` means the target accepted the request, not that the intended operation completed. Inspect fresh state in the target app. After a timeout or `unverified` response, check the outcome before retrying; an action may already have happened. Exit code 0 means `ok` or `delivered`, 1 means failure or uncertainty, and 2 means invalid arguments.
 
-Use `capture` for OCR across displays or `ocr /path/to/image.png` for a selected image. `capture --output-dir /path/to/new-folder` saves screenshots. Capture can include unrelated private information; scope it to the task and do not upload captures without authorization. OCR text and coordinates are not a verified control identity or a click fallback.
+Use `capture` for OCR across displays or `ocr /path/to/image.png` for a selected image. `capture --output-dir /path/to/new-folder` saves screenshots. Capture can include unrelated private information; scope it to the task and do not upload captures without authorization. OCR is inspection only. Coordinate clicking and simulated keyboard input are not implemented; the working input path writes directly to the selected Accessibility field.
 
-For a harmless first test, use `demo show`, `demo scan`, `demo press ID --button 'Cancel'`, and `demo result`. Use dummy text for any demo field. These commands operate the app's own test dialog.
+For a harmless first test, use `demo show`, `demo scan`, `demo press ID --button 'Cancel'`, and `demo result`. Use dummy text for any demo field. Do not use `--saved` in a demo when the stored item is a real password, or replace the user's saved item with a test value. These commands operate the app's own test dialog.
 
 Use `--help` for current arguments. The user can choose **Pause CLI access** to revoke acknowledgment and block new actions. Quitting alone is temporary because the CLI can relaunch the app.
 

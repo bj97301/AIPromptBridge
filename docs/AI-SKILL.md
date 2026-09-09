@@ -18,7 +18,7 @@ These commands work before risk acknowledgment and while CLI control is paused. 
 
 Install returns a result for every selected destination. Exit code 0 means every destination was installed, updated, or already current. Exit code 1 includes skipped customized copies or failures, reported as `partial_failure`; inspect the individual results. Unknown IDs reject the whole selection before any installation. Export creates a new ZIP with mode 0600 and refuses to overwrite an existing file.
 
-The skill explains the app, includes a Python CLI, and teaches the agent how to scan, identify an exact dialog, press a button, fill a field, handle missing permissions, and verify the result. It keeps the normal risk acknowledgment and agent approval requirements.
+The skill explains the app, includes a Python CLI, and teaches the agent how to scan, identify an exact dialog, press a button, fill a field, handle missing permissions, and verify the result. It covers the [verified System Settings password flow](TESTING.md#real-system-settings-authentication), saved Keychain input, restoration after an authorized test, and the existing password approval requirements. It also explains that `watch` currently polls and that keyboard input and agent wake-up notifications are not implemented.
 
 ## Compatibility
 

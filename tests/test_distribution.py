@@ -36,6 +36,9 @@ with tempfile.TemporaryDirectory(prefix='AIPromptBridge download test ') as temp
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     assert info['LSMinimumSystemVersion'] == '14.0'
     assert info['CFBundleIdentifier'] == 'io.github.bj97301.aipromptbridge'
+    assert info['CFBundleIconFile'] == 'AppIcon'
+    icon = app / 'Contents/Resources/AppIcon.icns'
+    assert icon.read_bytes().startswith(b'icns') and icon.stat().st_size > 1024
     manifest = json.loads((folder / 'BUILD-INFO.json').read_text())
     assert manifest['architecture'] == args.arch
     if os.environ.get('GITHUB_ACTIONS') == 'true':

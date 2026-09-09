@@ -30,6 +30,20 @@ For native approval QA, use `aipromptbridge demo show`, scan its ID, and request
 
 Local development QA on 2026-09-09 verified the packaged storage form, saving a disposable dummy password, native denial with the test field remaining empty, and one-time approval of both saved and manual dummy input. The five native integration tests passed, including hidden input with ask-first temporarily disabled. Direct socket tests confirmed all disabled operation gates and the absence of approval, credential-export, and permission-change commands. The temporary password was deleted and ask-first restored. After removing and re-adding the current app in Accessibility, a separate native fixture received the exact dummy secure-field value and passed Continue and Cancel through the installed skill's CLI. No time-zone setting was changed.
 
-A predecessor development build was also checked against a live macOS sign-in confirmation and a real System Settings password sheet. The sign-in confirmation closed after an exact CLI button press. The password sheet accepted a dummy value through AX and received one deliberately invalid submission. Successful authentication with a real password was not verified. Live full-display capture coverage is still pending; image OCR was verified separately.
+A predecessor development build was also checked against a live macOS sign-in confirmation and a real System Settings password sheet. The sign-in confirmation closed after an exact CLI button press. The password sheet accepted a dummy value through AX and received one deliberately invalid submission. That earlier test did not verify successful authentication. Live full-display capture coverage is still pending; image OCR was verified separately.
 
-No test needs an actual password, external account, or permission change. Use the provided fixtures instead of submitting invalid credentials to a real account.
+## Real System Settings authentication
+
+On 2026-09-09, an explicitly authorized local test of AIPromptBridge 0.1.0 on macOS 26.6.2, build 25G83, successfully used the app's existing saved Keychain password to authenticate to System Settings. Accessibility, prompt buttons, and saved input were already enabled; ask-first was already off. The test preserved these choices.
+
+1. Recorded automatic time zone as on and the current time zone.
+2. Clicked **Set time zone automatically using your current location** to open the Date & Time password sheet.
+3. Used the installed skill's CLI to scan `com.apple.systempreferences`. It found the sheet's writable secure Password field and exact Unlock button.
+4. Called `fill DIALOG_ID --field field-2 --saved`. The app returned `delivered` with `secret_returned: false`.
+5. Scanned again for a fresh dialog ID and called `press DIALOG_ID --button Unlock`.
+6. Verified in System Settings that the authentication sheet closed and automatic time zone changed to off.
+7. Restored automatic time zone to on and verified that the time zone, automatic date/time, and 24-hour display settings remained unchanged.
+
+The password stayed inside the app's Keychain-to-field path and was not extracted, placed in command arguments, or returned to the CLI. No screenshot containing entered password text was saved. The saved-password status and the app's permissions were unchanged afterward. This verifies the tested Date & Time sheet; other system prompts still need individual compatibility checks.
+
+The automated test suites need no real password, external account, or system setting change. Use their dummy fixtures for routine testing.

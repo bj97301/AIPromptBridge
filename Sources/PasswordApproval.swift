@@ -45,9 +45,11 @@ final class PasswordApprovalController: NSWindowController, NSWindowDelegate {
         let buttons = NSStackView()
         buttons.spacing = 12
         let deny = NSButton(title: "Deny", target: self, action: #selector(denyInput))
+            .withHelp("Reject this request without entering a value. Your saved password and allowed actions stay as they are.")
         deny.keyEquivalent = "\r"
         buttons.addArrangedSubview(deny)
-        buttons.addArrangedSubview(NSButton(title: "Allow once", target: self, action: #selector(allowInput)))
+        buttons.addArrangedSubview(NSButton(title: "Allow once", target: self, action: #selector(allowInput))
+            .withHelp("Approve input into the displayed field once, before this request expires. This does not submit the target dialog."))
         stack.addArrangedSubview(buttons)
     }
 

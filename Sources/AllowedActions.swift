@@ -28,14 +28,15 @@ final class AllowedActionsController: NSWindowController {
         let title = NSTextField(labelWithString: "Choose what AI tools may do")
         title.font = .systemFont(ofSize: 24, weight: .semibold)
         stack.addArrangedSubview(title)
-        for (capability, title) in [
-            (BridgeCapability.buttons, "Allow prompt buttons, such as OK, Continue, and Cancel"),
-            (.manualInput, "Allow manual password or text input from the CLI"),
-            (.savedPassword, "Allow the CLI to use the saved password"),
-            (.askForPassword, "Ask me before each password use"),
-            (.capture, "Allow screenshots and OCR")
+        for (capability, title, help) in [
+            (BridgeCapability.buttons, "Allow prompt buttons, such as OK, Continue, and Cancel", "Allow the CLI to press an exact button in a freshly inspected dialog. A button can approve access or change settings."),
+            (.manualInput, "Allow manual password or text input from the CLI", "Allow hidden terminal input or a trusted pipe to fill a field. Enabling this offers optional Keychain storage."),
+            (.savedPassword, "Allow the CLI to use the saved password", "Allow requests to fill a secure field with this app's saved Keychain password. The CLI never receives the password."),
+            (.askForPassword, "Ask me before each password use", "Require your Allow once or Deny decision for each manual or saved input. Turning this off lets permitted tools fill fields without this extra confirmation."),
+            (.capture, "Allow screenshots and OCR", "Allow requested screenshots and on-device text recognition. Live capture also needs macOS Screen Recording permission and may include private information.")
         ] {
             let checkbox = NSButton(checkboxWithTitle: title, target: self, action: #selector(toggle(_:)))
+                .withHelp(help)
             checkbox.identifier = NSUserInterfaceItemIdentifier(capability.rawValue)
             controls[capability] = checkbox
             stack.addArrangedSubview(checkbox)
@@ -48,9 +49,11 @@ final class AllowedActionsController: NSWindowController {
         stack.addArrangedSubview(savedLabel)
         let buttons = NSStackView()
         buttons.spacing = 10
-        buttons.addArrangedSubview(NSButton(title: "Save or replace password…", target: self, action: #selector(savePassword)))
-        buttons.addArrangedSubview(NSButton(title: "Delete saved password", target: self, action: #selector(deletePassword)))
-        buttons.addArrangedSubview(NSButton(title: "Done", target: self, action: #selector(done)))
+        buttons.addArrangedSubview(NSButton(title: "Save or replace password…", target: self, action: #selector(savePassword))
+            .withHelp("Open a hidden password form to save or replace this app's Keychain item. Saving enables saved-password input."))
+        buttons.addArrangedSubview(NSButton(title: "Delete saved password", target: self, action: #selector(deletePassword))
+            .withHelp("Delete only AIPromptBridge's saved password and disable saved-password input. Manual input settings stay as they are."))
+        buttons.addArrangedSubview(NSButton(title: "Done", target: self, action: #selector(done)).withHelp(AppHelp.done))
         stack.addArrangedSubview(buttons)
         message.font = .systemFont(ofSize: 12)
         message.preferredMaxLayoutWidth = 624
@@ -88,15 +91,19 @@ final class AllowedActionsController: NSWindowController {
         alert.messageText = "Save a password securely?"
         alert.informativeText = "AIPromptBridge stores it in this Mac's Keychain and never returns it to the CLI. Save enables saved-password input. You can keep using manual input without storing a password."
         alert.addButton(withTitle: "Save & allow CLI use")
+            .withHelp("Save the matching password in macOS Keychain and enable saved input. Your ask-before-use setting stays as it is.")
         alert.addButton(withTitle: "Keep current settings")
+            .withHelp("Close without saving or replacing a password. Keep the current allowed actions.")
         // NSAlert measures its accessory's frame before laying out the sheet.
         let fields = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 64))
         let password = NSSecureTextField(frame: NSRect(x: 0, y: 38, width: 340, height: 26))
         password.placeholderString = "Password"
         password.setAccessibilityLabel("Password to store in Keychain")
+        password.withHelp("Enter the password to save in this Mac's Keychain. Input is hidden and never returned to the CLI.")
         let confirmation = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 26))
         confirmation.placeholderString = "Confirm password"
         confirmation.setAccessibilityLabel("Confirm password to store")
+        confirmation.withHelp("Enter the same password again to check for typing mistakes before saving.")
         for field in [password, confirmation] {
             fields.addSubview(field)
         }

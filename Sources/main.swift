@@ -63,9 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.submenu = editMenu
         main.addItem(edit)
+        AppHelp.apply(to: main)
         NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "text.bubble", accessibilityDescription: "AIPromptBridge")
+        statusItem.button?.image = NSImage(systemSymbolName: AppBrand.symbolName, accessibilityDescription: "AIPromptBridge")
+        statusItem.button?.withHelp("AIPromptBridge: open setup, choose allowed actions, install the AI skill, or pause CLI access.")
         let menu = NSMenu()
         menu.addItem(withTitle: "Open AIPromptBridge", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(withTitle: "Allowed actions…", action: #selector(showAllowedActions), keyEquivalent: "")
@@ -76,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         for item in menu.items { if item.action != #selector(NSApplication.terminate(_:)) { item.target = self } }
+        AppHelp.apply(to: menu)
         statusItem.menu = menu
     }
 
@@ -118,8 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 12
-        buttons.addArrangedSubview(NSButton(title: "Enable Accessibility…", target: self, action: #selector(openAccessibility)))
-        buttons.addArrangedSubview(NSButton(title: "Enable Screen Recording…", target: self, action: #selector(openScreenRecording)))
+        buttons.addArrangedSubview(NSButton(title: "Enable Accessibility…", target: self, action: #selector(openAccessibility))
+            .withHelp("Open macOS Accessibility settings so you can allow this app to inspect dialogs and use their exposed controls."))
+        buttons.addArrangedSubview(NSButton(title: "Enable Screen Recording…", target: self, action: #selector(openScreenRecording))
+            .withHelp("Request optional macOS Screen Recording access for live screenshots and OCR. Captures also need to be allowed in this app."))
         stack.addArrangedSubview(buttons)
         let commands = label("./aipromptbridge scan\n./aipromptbridge press ID --button 'Continue'\n./aipromptbridge fill ID --field field-1 --secret-prompt\n./aipromptbridge capture", size: 13)
         commands.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -131,9 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let utilities = NSStackView()
         utilities.orientation = .horizontal
         utilities.spacing = 12
-        utilities.addArrangedSubview(NSButton(title: "Show test dialog", target: self, action: #selector(showDemoFromUI)))
-        utilities.addArrangedSubview(NSButton(title: "Pause CLI access", target: self, action: #selector(pauseAccess)))
-        utilities.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
+        utilities.addArrangedSubview(NSButton(title: "Show test dialog", target: self, action: #selector(showDemoFromUI)).withHelp(AppHelp.demo))
+        utilities.addArrangedSubview(NSButton(title: "Pause CLI access", target: self, action: #selector(pauseAccess)).withHelp(AppHelp.pause))
+        utilities.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)).withHelp(AppHelp.bug))
         stack.addArrangedSubview(utilities)
         refresh()
     }
@@ -182,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scroll.heightAnchor.constraint(equalToConstant: 420).isActive = true
         stack.addArrangedSubview(scroll)
         let checkbox = NSButton(checkboxWithTitle: "I have read the notices and accept the risks and liability limitations.", target: self, action: #selector(acknowledgmentChanged))
+            .withHelp("Check after reading the notice and license. Then choose Enable AIPromptBridge to record your acknowledgment on this Mac.")
         checkbox.state = .off
         checkbox.isEnabled = consent.available
         acknowledgmentCheckbox = checkbox
@@ -190,13 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 12
-        buttons.addArrangedSubview(NSButton(title: "Read license…", target: self, action: #selector(readLicense)))
+        buttons.addArrangedSubview(NSButton(title: "Read license…", target: self, action: #selector(readLicense))
+            .withHelp("Read the complete bundled Apache 2.0 license before deciding whether to enable the app."))
         let enable = NSButton(title: "Enable AIPromptBridge", target: self, action: #selector(acceptRisks))
+            .withHelp("Record your acknowledgment and enable the allowed CLI operations. Read the notices and check the acknowledgment first.")
         enable.isEnabled = false
         enableButton = enable
         buttons.addArrangedSubview(enable)
-        buttons.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
-        buttons.addArrangedSubview(NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:))))
+        buttons.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)).withHelp(AppHelp.bug))
+        buttons.addArrangedSubview(NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:))).withHelp(AppHelp.quit))
         stack.addArrangedSubview(buttons)
         stack.addArrangedSubview(setupButtons())
     }
@@ -204,8 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setupButtons() -> NSStackView {
         let buttons = NSStackView()
         buttons.spacing = 12
-        buttons.addArrangedSubview(NSButton(title: "Allowed actions…", target: self, action: #selector(showAllowedActions)))
-        buttons.addArrangedSubview(NSButton(title: "Install AI skill…", target: self, action: #selector(installSkill)))
+        buttons.addArrangedSubview(NSButton(title: "Allowed actions…", target: self, action: #selector(showAllowedActions)).withHelp(AppHelp.allowed))
+        buttons.addArrangedSubview(NSButton(title: "Install AI skill…", target: self, action: #selector(installSkill)).withHelp(AppHelp.skills))
         return buttons
     }
 
@@ -230,7 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Apache License 2.0"
         alert.informativeText = "Review the complete license, including Sections 7 and 8 on warranty, risk, and liability."
-        alert.addButton(withTitle: "Done")
+        alert.addButton(withTitle: "Done").withHelp("Close the license and return to setup without changing your acknowledgment.")
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 620, height: 420))
         scroll.hasVerticalScroller = true
         let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 420))
@@ -308,12 +316,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "AIPromptBridge test dialog"
         alert.informativeText = password ? "Use a dummy access key to test hidden input, then choose Continue or Cancel. This does not sign in or change settings." : "Choose Continue or Cancel through the CLI. This does not change settings."
-        alert.addButton(withTitle: "Continue")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Continue").withHelp("Finish the harmless test with Continue. This does not sign in or change settings.")
+        alert.addButton(withTitle: "Cancel").withHelp("Close the harmless test with Cancel and discard any dummy input.")
         if password {
             let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 26))
             field.placeholderString = "Dummy access key"
             field.setAccessibilityLabel("Dummy access key")
+            field.withHelp("Use a made-up value to test hidden input. Do not enter a real password in this test dialog.")
             alert.accessoryView = field
             demoField = field
         }
