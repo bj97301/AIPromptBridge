@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""AIPromptBridge's local JSON CLI. No external packages required."""
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import socket
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+SOCKET_DIR = Path(f"/tmp/io.github.bj97301.aipromptbridge-{os.getuid()}")
+SOCKET_PATH = SOCKET_DIR / "control.sock"
+APP = Path(__file__).resolve().parent.parent / "AIPromptBridge.app"
+SUCCESS = {"ok", "delivered"}
+
+
+def verify_endpoint():
+    directory = SOCKET_DIR.lstat()
+    endpoint = SOCKET_PATH.lstat()
+    if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid()
+            or stat.S_IMODE(directory.st_mode) != 0o700
+            or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid()
+            or stat.S_IMODE(endpoint.st_mode) != 0o600):
+        raise RuntimeError("Local socket must belong to this account with directory mode 0700 and socket mode 0600.")
+
+
+def connect():
+    try:
+        verify_endpoint()
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(30)
+        connection.connect(str(SOCKET_PATH))
+        return connection
+    except (FileNotFoundError, ConnectionRefusedError):
+        try:
+            connection.close()
+        except UnboundLocalError:
+            pass
+    if not APP.is_dir():
+        raise RuntimeError(f"App not found at {APP}. Run python3 build.py first.")
+    subprocess.run(["/usr/bin/open", "-g", str(APP), "--args", "--background"], check=True, stdout=subprocess.DEVNULL)
+    for _ in range(60):
+        time.sleep(0.1)
+        try:
+            verify_endpoint()
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            connection.settimeout(30)
+            connection.connect(str(SOCKET_PATH))
+            return connection
+        except (FileNotFoundError, ConnectionRefusedError):
+            if "connection" in locals():
+                connection.close()
+    raise RuntimeError("AIPromptBridge did not start. Open the app to inspect the problem.")
+
+
+def request(payload):
+    payload = dict(payload)
+    payload["deadline"] = time.time() + 25
+    # Only connection establishment may be retried. Never resend a mutation.
+    with connect() as connection:
+        encoded = bytearray(json.dumps(payload, ensure_ascii=False).encode() + b"\n")
+        if len(encoded) > 65_536:
+            raise RuntimeError("Request is too large.")
+        try:
+            connection.sendall(encoded)
+        finally:
+            encoded[:] = b"\x00" * len(encoded)
+        received = bytearray()
+        while len(received) <= 32 * 1024 * 1024:
+            chunk = connection.recv(65_536)
+            if not chunk:
+                raise RuntimeError("Connection closed without a result. The action may have occurred; scan before retrying.")
+            received.extend(chunk)
+            if b"\n" in chunk:
+                return json.loads(received)
+    raise RuntimeError("Response exceeded the size limit.")
+
+
+def output(result):
+    print(json.dumps(result, indent=2, ensure_ascii=False), flush=True)
+
+
+def secret_from_args(args):
+    if args.secret_stdin:
+        if sys.stdin.isatty():
+            raise RuntimeError("--secret-stdin requires a pipe. Use --secret-prompt for hidden terminal input.")
+        raw = sys.stdin.buffer.read(16_386)
+        if raw.endswith(b"\n"):
+            raw = raw[:-1]
+            if raw.endswith(b"\r"):
+                raw = raw[:-1]
+        try:
+            value = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise RuntimeError("Field input must be valid UTF-8.") from None
+    else:
+        # Refuse getpass's fallback to echoed input if there is no controlling terminal.
+        try:
+            with open("/dev/tty", "w+") as terminal:
+                if not terminal.isatty():
+                    raise OSError("No controlling terminal")
+                value = getpass.getpass("Field value (hidden): ", stream=terminal)
+        except OSError:
+            raise RuntimeError("Hidden input requires a terminal. Pipe a value using --secret-stdin.") from None
+    if not value or len(value.encode()) > 16_384:
+        raise RuntimeError("Field input must contain 1 to 16384 UTF-8 bytes.")
+    return value
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="Inspect and control macOS dialogs through the local AIPromptBridge app.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("status", "open", "apps", "risks"):
+        sub.add_parser(name)
+    for name in ("scan", "watch"):
+        cmd = sub.add_parser(name)
+        target = cmd.add_mutually_exclusive_group()
+        target.add_argument("--app", help="Exact bundle identifier")
+        target.add_argument("--pid", type=int, help="Exact process ID")
+        if name == "watch":
+            cmd.add_argument("--interval", type=float, default=2, help="Seconds between scans, at least 1")
+    for name in ("press", "accept", "reject"):
+        cmd = sub.add_parser(name, help="Press an exact button; accept and reject are aliases")
+        cmd.add_argument("id")
+        cmd.add_argument("--button", required=True, help="Exact visible label, e.g. Continue or Cancel")
+    def fill_command(parent):
+        cmd = parent.add_parser("fill")
+        cmd.add_argument("id")
+        cmd.add_argument("--field", required=True)
+        source = cmd.add_mutually_exclusive_group(required=True)
+        source.add_argument("--secret-stdin", action="store_true")
+        source.add_argument("--secret-prompt", action="store_true")
+    fill_command(sub)
+    capture = sub.add_parser("capture", help="OCR every display, optionally saving full-resolution PNGs")
+    capture.add_argument("--display", type=int)
+    capture.add_argument("--output-dir", help="New directory to create for screenshots; parent must exist")
+    ocr = sub.add_parser("ocr", help="Recognize text in an existing image without Screen Recording permission")
+    ocr.add_argument("image")
+    demo = sub.add_parser("demo", help="Test with actual AppKit controls inside AIPromptBridge")
+    demo_sub = demo.add_subparsers(dest="demo_command", required=True)
+    show = demo_sub.add_parser("show")
+    show.add_argument("--no-password", action="store_true")
+    demo_sub.add_parser("scan")
+    demo_sub.add_parser("result")
+    press = demo_sub.add_parser("press")
+    press.add_argument("id")
+    press.add_argument("--button", required=True)
+    fill_command(demo_sub)
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    try:
+        command = args.command
+        if command not in ("status", "open", "risks"):
+            setup = request({"op": "status"})
+            if not setup.get("acknowledgment", {}).get("accepted"):
+                output({"status": "acknowledgment_required", "message": "Open AIPromptBridge and review and acknowledge the risk notice and license first.", "acknowledgment": setup.get("acknowledgment", {})})
+                return 1
+        if command == "ocr":
+            # The CLI reads exactly the caller-selected file. Stage it in the app's
+            # private socket directory so the GUI app needs no Documents grant.
+            with connect():
+                pass
+            source = Path(args.image).resolve()
+            if source.stat().st_size > 32 * 1024 * 1024:
+                raise RuntimeError("Image must be at most 32 MiB.")
+            with source.open("rb") as original, tempfile.NamedTemporaryFile(dir=SOCKET_DIR, prefix="image-", suffix=source.suffix) as staged:
+                remaining = 32 * 1024 * 1024
+                while True:
+                    chunk = original.read(min(65_536, remaining + 1))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    if remaining < 0:
+                        raise RuntimeError("Image must be at most 32 MiB.")
+                    staged.write(chunk)
+                staged.flush()
+                result = request({"op": "ocr", "image": staged.name})
+            output(result)
+            return 0 if result.get("status") in SUCCESS else 1
+        if command == "capture" and args.output_dir:
+            destination = Path(args.output_dir).resolve()
+            if destination.exists() or not destination.parent.is_dir():
+                raise RuntimeError("Choose a new output directory whose parent already exists.")
+            with connect():
+                pass
+            with tempfile.TemporaryDirectory(dir=SOCKET_DIR, prefix="capture-") as temporary:
+                image_directory = Path(temporary) / "images"
+                capture_request = {"op": "capture", "output_dir": str(image_directory)}
+                if args.display is not None:
+                    capture_request["display"] = args.display
+                result = request(capture_request)
+                if result.get("status") in SUCCESS:
+                    destination.mkdir(mode=0o700)
+                    for display in result.get("displays", []):
+                        source = Path(display["image_path"])
+                        if source.parent != image_directory or source.is_symlink():
+                            raise RuntimeError("The app returned an unexpected capture path.")
+                        target = destination / source.name
+                        with target.open("xb") as new_file, source.open("rb") as original:
+                            shutil.copyfileobj(original, new_file)
+                        target.chmod(0o600)
+                        display["image_path"] = str(target)
+            output(result)
+            return 0 if result.get("status") in SUCCESS else 1
+        payload = {"op": command}
+        if command in ("scan", "watch"):
+            payload["op"] = "scan"
+            if args.app:
+                payload["app"] = args.app
+            if args.pid is not None:
+                payload["pid"] = args.pid
+        elif command in ("press", "accept", "reject"):
+            payload = {"op": "press", "id": args.id, "button": args.button}
+        elif command == "capture":
+            if args.display is not None:
+                payload["display"] = args.display
+        elif command == "demo":
+            payload["op"] = "demo." + args.demo_command
+            if args.demo_command == "show":
+                payload["password"] = not args.no_password
+            elif args.demo_command == "press":
+                payload.update(id=args.id, button=args.button)
+        if command == "fill" or (command == "demo" and args.demo_command == "fill"):
+            payload.update(id=args.id, field=args.field, secret=secret_from_args(args))
+        if command == "watch":
+            if args.interval < 1:
+                raise RuntimeError("Watch interval must be at least one second.")
+            previous = None
+            last_output = 0
+            while True:
+                result = request(payload)
+                key = json.dumps([result.get("status"), sorted(d.get("fingerprint", "") for d in result.get("dialogs", []))])
+                # Refresh unchanged IDs before their 60-second expiration.
+                if key != previous or time.monotonic() - last_output >= 45:
+                    output(result)
+                    previous = key
+                    last_output = time.monotonic()
+                if result.get("status") not in SUCCESS:
+                    return 1
+                time.sleep(args.interval)
+        result = request(payload)
+        payload.pop("secret", None)
+        output(result)
+        return 0 if result.get("status") in SUCCESS else 1
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        # No request payload or password appears in exception messages.
+        output({"status": "cli_error", "message": str(error)})
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,20 @@
+name: Build and consent checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compile Python entry points
+        run: python3 -m py_compile build.py cli/aipromptbridge tests/*.py
+      - name: Build locally signed macOS app
+        run: python3 build.py
+      - name: Test isolated acknowledgment policy
+        run: python3 tests/test_consent.py
