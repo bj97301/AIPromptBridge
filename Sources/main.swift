@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About AIPromptBridge", action: #selector(showWindow), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Report a bug…", action: #selector(reportBug), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit AIPromptBridge", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let top = NSMenuItem()
@@ -61,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Open AIPromptBridge", action: #selector(showWindow), keyEquivalent: "")
         menu.addItem(withTitle: "Show test dialog", action: #selector(showDemoFromUI), keyEquivalent: "")
         menu.addItem(withTitle: "Pause CLI access", action: #selector(pauseAccess), keyEquivalent: "")
+        menu.addItem(withTitle: "Report a bug…", action: #selector(reportBug), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         for item in menu.items { if item.action != #selector(NSApplication.terminate(_:)) { item.target = self } }
@@ -117,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stack.addArrangedSubview(label("Some system prompts require direct interaction. Passwords are never read back. Captures happen only when requested.", size: 13))
         stack.addArrangedSubview(NSButton(title: "Show test dialog", target: self, action: #selector(showDemoFromUI)))
         stack.addArrangedSubview(NSButton(title: "Pause CLI access", target: self, action: #selector(pauseAccess)))
+        stack.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
         refresh()
     }
 
@@ -177,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         enable.isEnabled = false
         enableButton = enable
         buttons.addArrangedSubview(enable)
+        buttons.addArrangedSubview(NSButton(title: "Report a bug…", target: self, action: #selector(reportBug)))
         buttons.addArrangedSubview(NSButton(title: "Quit", target: NSApp, action: #selector(NSApplication.terminate(_:))))
         stack.addArrangedSubview(buttons)
     }
@@ -227,6 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         refresh()
+    }
+
+    @objc func reportBug() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/bj97301/AIPromptBridge/issues/new")!)
     }
 
     @objc func openAccessibility() {

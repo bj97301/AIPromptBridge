@@ -49,4 +49,8 @@ Some custom dialogs, protected password fields, and system permission prompts ca
 
 Use **Pause CLI access** in the app to block new requests, or quit it. Revoke Accessibility and Screen Recording in System Settings when no longer needed. [Security details](SECURITY.md) · [Command reference](docs/CLI.md) · [Tests](docs/TESTING.md).
 
+## Report a bug
+
+Choose **Report a bug…** in the app or [open a GitHub issue](https://github.com/bj97301/AIPromptBridge/issues/new). Include your macOS version, steps to reproduce, and what you expected to happen. Reports are public, so remove passwords and private information. Report security vulnerabilities through [private reporting](SECURITY.md#report-a-vulnerability).
+
 Licensed under [Apache 2.0](LICENSE). Copyright 2026 Bryan Joseph and contributors. An acknowledgment cannot waive rights or liabilities that the law makes non-waivable.
