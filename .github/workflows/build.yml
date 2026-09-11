@@ -40,6 +40,8 @@ jobs:
         run: python3 tests/test_skills.py
       - name: Test operation permissions and password approvals
         run: python3 tests/test_passwords.py
+      - name: Test Finder stored-password flow without credential access
+        run: python3 tests/test_security_agent_flow.py
       - name: Test packaged app's unacknowledged IPC gate
         run: python3 tests/test_gate.py
       - name: Test packaged app's CLI skill installation

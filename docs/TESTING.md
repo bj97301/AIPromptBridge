@@ -8,6 +8,7 @@ python3 tests/test_accessibility.py
 python3 tests/test_consent.py
 python3 tests/test_skills.py
 python3 tests/test_passwords.py
+python3 tests/test_security_agent_flow.py
 # Optional: actual Keychain round-trip with a unique temporary dummy item
 python3 tests/test_passwords.py --keychain
 ```
@@ -24,7 +25,7 @@ The same suite checks CLI destination selection, validation before writes, confi
 
 The password suite checks permission defaults, manual and saved input, native-only approval, denial, replay, cancellation, expiry, target changes, revoked access, and CLI polling. It uses isolated preferences and a fake credential store. With `--keychain`, it also saves, replaces, reads, and deletes a unique temporary dummy Keychain item. It never touches the app's saved password.
 
-CI runs consent, skill, and password policy suites on both Apple Silicon and Intel. It also runs `test_gate.py` against the fresh, unacknowledged app and `test_skill_cli.py` against a temporary destination. No workflow accepts notices or grants UI permissions. The native dialog, cross-app Accessibility, and real Keychain suites remain local checks. Before uploading a download, `test_distribution.py` extracts the ZIP and verifies its checksum, code signature, CPU architecture, CLI execution and app discovery, notices, and portable skill. Both architectures must pass before publication.
+CI runs consent, skill, password policy, and simulated Finder password-flow suites on both Apple Silicon and Intel. It also runs `test_gate.py` against the fresh, unacknowledged app and `test_skill_cli.py` against a temporary destination. No workflow accepts notices or grants UI permissions. The native dialog, cross-app Accessibility, and real Keychain suites remain local checks. Before uploading a download, `test_distribution.py` extracts the ZIP and verifies its checksum, code signature, CPU architecture, CLI execution and app discovery, notices, and portable skill. Both architectures must pass before publication.
 
 For native approval QA, use `aipromptbridge demo show`, scan its ID, and request `demo fill ID --field field-1 --saved` or manual dummy input. Verify Deny leaves the field empty, Allow once fills it, and the CLI returns only a result. Delete any test password stored through the app and restore ask-first afterward. Do not automate approval for a real credential.
 
@@ -46,4 +47,30 @@ On 2026-09-09, an explicitly authorized local test of AIPromptBridge 0.1.0 on ma
 
 The password stayed inside the app's Keychain-to-field path and was not extracted, placed in command arguments, or returned to the CLI. No screenshot containing entered password text was saved. The saved-password status and the app's permissions were unchanged afterward. This verifies the tested Date & Time sheet; other system prompts still need individual compatibility checks.
 
-The automated test suites need no real password, external account, or system setting change. Use their dummy fixtures for routine testing.
+The routine test suites need no real password, external account, or system setting change. Use their dummy fixtures for routine testing. The optional live Finder test below can use the app's stored password when explicitly requested with `--saved`.
+
+## Finder authentication window regression
+
+On 2026-09-10, the live Finder prompt to move `BatteryJesusDev.app` to the Trash was exposed by `com.apple.SecurityAgent` as `AXWindow` / `AXStandardWindow`, with `AXModal=false`. Its Password field was an enabled, writable `AXSecureTextField`. The old scanner returned no dialogs because it only recognized sheets, dialog subroles, and modal elements.
+
+Discovery and action revalidation now also recognize SecurityAgent's windows. Ordinary windows owned by other apps retain the existing detection rules. Password delivery still uses the selected secure Accessibility field, the app's existing Keychain path, and the existing operation and approval settings.
+
+With that specific Finder prompt already open, run the read-only regression check:
+
+```sh
+python3 tests/test_security_agent.py --expect-text 'BatteryJesusDev.app'
+```
+
+The default test checks the prompt's identity, secure-field availability, absence of returned field values, and OK/Cancel buttons without filling or submitting. It failed against the original running app with zero matching dialogs. It exits 77 if the app needs acknowledgment or Accessibility permission, or no live SecurityAgent window is open. An open window that the scanner fails to recognize remains a test failure. Use a specific text fragment from the actual target when testing another Finder prompt.
+
+To include the stored password and submit the matching Finder operation:
+
+```sh
+python3 tests/test_security_agent.py --expect-text 'BatteryJesusDev.app' --saved
+```
+
+Use this mode only for an already-open prompt whose displayed operation you intend to authorize. For this example, pressing OK allows Finder to move the app to the Trash. The test checks that saved input and buttons are enabled and a password is stored. It calls `fill ... --saved`, checks `secret_returned: false`, then rescans and verifies the process and dialog fingerprint before pressing the exact OK button with a fresh ticket. It polls for closure for up to five seconds and never retries password entry or submission. An incomplete scan cannot count as closure. Verify the resulting file operation in Finder separately.
+
+The saved password stays in the app's Keychain-to-field path. The test does not extract it, save a replacement, change permissions, or use it in a dummy fixture. If ask-first is enabled, the CLI waits for the user's native approval; denial stops the test. This live mode is not part of unattended CI. `test_security_agent_flow.py` checks the command sequence, changed or ambiguous targets, denial, and incomplete scans using fake responses without any credential access.
+
+After the user authenticated the Accessibility permission change and the rebuilt app reported access restored, the same regression check passed against the live Finder prompt. The updated CLI then delivered the app's saved Keychain password to its secure Password field with `secret_returned: false`. A fresh scan supplied a new ticket for the exact `OK` press. The prompt closed, the next scan returned no SecurityAgent dialogs, and `/Users/Bryan/.Trash/BatteryJesusDev.app` existed while `/Applications/BatteryJesusDev.app` did not. This verifies successful password entry and authentication for this Finder prompt, including action-time ticket revalidation. The password was never extracted or returned to the CLI.

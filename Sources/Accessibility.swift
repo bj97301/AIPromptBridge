@@ -69,7 +69,7 @@ final class AccessibilityController {
             var budget = 1000
             var visited = Set<CFHashCode>()
             for window in windows {
-                findDialogs(window, depth: 0, budget: &budget, visited: &visited, deadline: deadline, roots: &roots)
+                findDialogs(window, owner: process.bundleIdentifier, depth: 0, budget: &budget, visited: &visited, deadline: deadline, roots: &roots)
             }
             for root in roots {
                 if Date().timeIntervalSince1970 >= deadline { break }
@@ -93,20 +93,25 @@ final class AccessibilityController {
                 "complete": false, "note": "Lists exposed dialogs and sheets. Custom or protected prompts may be missing. Use capture for visual inspection."]
     }
 
-    private func findDialogs(_ node: AXUIElement, depth: Int, budget: inout Int, visited: inout Set<CFHashCode>, deadline: Double, roots: inout [AXUIElement]) {
+    private func findDialogs(_ node: AXUIElement, owner: String?, depth: Int, budget: inout Int, visited: inout Set<CFHashCode>, deadline: Double, roots: inout [AXUIElement]) {
         guard depth <= 9, budget > 0, Date().timeIntervalSince1970 < deadline else { return }
         guard visited.insert(CFHash(node)).inserted else { return }
         budget -= 1
         let role = axString(node, kAXRoleAttribute)
         let subrole = axString(node, kAXSubroleAttribute)
-        if role == kAXSheetRole || subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole || axBool(node, kAXModalAttribute) {
+        // SecurityAgent's Finder authentication prompt is an AXStandardWindow
+        // with AXModal=false. Its secure field and buttons still expose normal AX
+        // operations. Recognize the owning helper's windows during discovery AND
+        // ticket revalidation; ordinary app windows remain excluded.
+        let authenticationWindow = owner == "com.apple.SecurityAgent" && role == kAXWindowRole
+        if authenticationWindow || role == kAXSheetRole || subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole || axBool(node, kAXModalAttribute) {
             if !roots.contains(where: { CFEqual($0, node) }) { roots.append(node) }
             return
         }
         // Standard windows may contain attached sheets or custom AXDialog groups.
         var children = axElements(node, kAXChildrenAttribute)
         for sheet in axElements(node, "AXSheets") where !children.contains(where: { CFEqual($0, sheet) }) { children.append(sheet) }
-        for child in children { findDialogs(child, depth: depth + 1, budget: &budget, visited: &visited, deadline: deadline, roots: &roots) }
+        for child in children { findDialogs(child, owner: owner, depth: depth + 1, budget: &budget, visited: &visited, deadline: deadline, roots: &roots) }
     }
 
     private func describe(_ root: AXUIElement, process: NSRunningApplication, deadline: Double) -> DialogState? {
@@ -179,7 +184,7 @@ final class AccessibilityController {
         var budget = 1000
         var windows = axElements(app, kAXWindowsAttribute)
         if let focused = axElement(app, kAXFocusedWindowAttribute), !windows.contains(where: { CFEqual($0, focused) }) { windows.append(focused) }
-        for window in windows { findDialogs(window, depth: 0, budget: &budget, visited: &visited, deadline: deadline, roots: &roots) }
+        for window in windows { findDialogs(window, owner: state.process.bundleIdentifier, depth: 0, budget: &budget, visited: &visited, deadline: deadline, roots: &roots) }
         return roots.contains { CFEqual($0, state.root) }
     }
 
